@@ -7,21 +7,20 @@ const {
   SlashCommandBuilder,
   REST,
   Routes,
-  PermissionFlagsBits,
   ThreadAutoArchiveDuration,
 } = require('discord.js');
 const fs = require('fs');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const TOKEN            = process.env.DISCORD_TOKEN;
-const CLIENT_ID        = process.env.CLIENT_ID;
-const GUILD_ID         = process.env.GUILD_ID;
-const LEAGUE_CHANNEL   = '1498804106628956211';
-const HOST_ROLE        = '1459877884645740846';
-const PING_ROLE        = '1451553808697266257';
+const TOKEN          = process.env.DISCORD_TOKEN;
+const CLIENT_ID      = process.env.CLIENT_ID;
+const GUILD_ID       = process.env.GUILD_ID;
+const LEAGUE_CHANNEL = '1498804106628956211';
+const HOST_ROLE      = '1459877884645740846';
+const PING_ROLE      = '1451553808697266257';
 
-const FORMAT_CAPACITY  = { '2v2': 4, '3v3': 6, '4v4': 8 };
-const REGION_LABELS    = {
+const FORMAT_CAPACITY = { '2v2': 4, '3v3': 6, '4v4': 8 };
+const REGION_LABELS   = {
   europe:        'Europe',
   asia:          'Asia',
   north_america: 'North America',
@@ -41,8 +40,31 @@ function saveDB(data) {
   fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
 
-function generateLeagueId() {
+function generateId() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
+// ─── Embed builder ────────────────────────────────────────────────────────────
+function buildEmbed(league) {
+  const typeLabel  = league.type  === 'swift'   ? 'Swift Game' : 'War Game';
+  const perksLabel = league.perks === 'perks'   ? 'Perks'      : 'No Perks';
+  const spots      = league.capacity - league.players.length;
+
+  return new EmbedBuilder()
+    .setTitle('League Open')
+    .setColor(0x2b2d31)
+    .addFields(
+      { name: 'League ID',  value: `\`${league.id}\``,                          inline: true },
+      { name: 'Format',     value: league.format,                               inline: true },
+      { name: 'Match Type', value: typeLabel,                                   inline: true },
+      { name: 'Perks',      value: perksLabel,                                  inline: true },
+      { name: 'Region',     value: REGION_LABELS[league.region],                inline: true },
+      { name: 'Host',       value: `<@${league.hostId}>`,                       inline: true },
+      { name: 'Players',    value: `${league.players.length} / ${league.capacity}`, inline: true },
+      { name: 'Spots Left', value: String(spots),                               inline: true },
+    )
+    .setFooter({ text: `Use /join-league id:${league.id} to join` })
+    .setTimestamp();
 }
 
 // ─── Slash commands ───────────────────────────────────────────────────────────
@@ -87,7 +109,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('cancel-league')
-    .setDescription('Cancel your league')
+    .setDescription('Cancel your hosted league')
     .addStringOption(o =>
       o.setName('id').setDescription('League ID').setRequired(true)),
 
@@ -114,33 +136,10 @@ async function registerCommands() {
   try {
     console.log('Registering slash commands...');
     await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-    console.log('Slash commands registered.');
+    console.log('Slash commands registered successfully.');
   } catch (err) {
     console.error('Failed to register commands:', err);
   }
-}
-
-// ─── Build league embed ───────────────────────────────────────────────────────
-function buildEmbed(league) {
-  const spots     = league.capacity - league.players.length;
-  const typeLabel = league.type === 'swift' ? 'Swift Game' : 'War Game';
-  const perksLabel = league.perks === 'perks' ? 'Perks' : 'No Perks';
-
-  return new EmbedBuilder()
-    .setTitle('League Open')
-    .setColor(0x2b2d31)
-    .addFields(
-      { name: 'League ID',    value: league.id,                      inline: true  },
-      { name: 'Format',       value: league.format,                  inline: true  },
-      { name: 'Match Type',   value: typeLabel,                      inline: true  },
-      { name: 'Perks',        value: perksLabel,                     inline: true  },
-      { name: 'Region',       value: REGION_LABELS[league.region],   inline: true  },
-      { name: 'Host',         value: `<@${league.hostId}>`,          inline: true  },
-      { name: 'Players',      value: `${league.players.length} / ${league.capacity}`, inline: true },
-      { name: 'Spots Left',   value: String(spots),                  inline: true  },
-    )
-    .setFooter({ text: `Use /join-league id:${league.id} to join` })
-    .setTimestamp();
 }
 
 // ─── Client ───────────────────────────────────────────────────────────────────
@@ -153,21 +152,21 @@ const client = new Client({
 });
 
 client.once('ready', async () => {
-  console.log(`Logged in as ${client.user.tag}`);
+  console.log(`Online as ${client.user.tag}`);
   await registerCommands();
 });
 
-// ─── Interaction handler ──────────────────────────────────────────────────────
+// ─── Interactions ─────────────────────────────────────────────────────────────
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  const { commandName, member, guild, channel } = interaction;
+  const { commandName, member, guild } = interaction;
 
   // ── /host-league ──────────────────────────────────────────────────────────
   if (commandName === 'host-league') {
 
-    if (channel.id !== LEAGUE_CHANNEL) {
-      return interaction.reply({ content: 'Leagues can only be hosted in <#' + LEAGUE_CHANNEL + '>.', ephemeral: true });
+    if (interaction.channelId !== LEAGUE_CHANNEL) {
+      return interaction.reply({ content: `Leagues can only be hosted in <#${LEAGUE_CHANNEL}>.`, ephemeral: true });
     }
 
     if (!member.roles.cache.has(HOST_ROLE)) {
@@ -178,10 +177,10 @@ client.on('interactionCreate', async interaction => {
     const type   = interaction.options.getString('type');
     const perks  = interaction.options.getString('perks');
     const region = interaction.options.getString('region');
-    const id     = generateLeagueId();
+    const id     = generateId();
 
-    const db      = loadDB();
-    const league  = {
+    const db = loadDB();
+    const league = {
       id,
       format,
       type,
@@ -190,55 +189,66 @@ client.on('interactionCreate', async interaction => {
       capacity: FORMAT_CAPACITY[format],
       hostId:   member.id,
       players:  [member.id],
-      threadId: null,
+      threadId:       null,
       embedMessageId: null,
     };
 
-    // Post the public embed first so we can store the message id
-    await interaction.deferReply();
-    const embedMsg = await interaction.editReply({
-      content: `<@&${PING_ROLE}> — A new league is open!`,
-      embeds: [buildEmbed(league)],
-    });
+    await interaction.deferReply({ ephemeral: true });
 
+    const leagueChannel = await guild.channels.fetch(LEAGUE_CHANNEL);
+
+    // Post the public embed
+    const embedMsg = await leagueChannel.send({ embeds: [buildEmbed(league)] });
     league.embedMessageId = embedMsg.id;
 
-    // Create private thread on the embed message
-    const thread = await embedMsg.startThread({
+    // Post the ping as a SEPARATE message
+    await leagueChannel.send({ content: `<@&${PING_ROLE}> — A new league is open! Use \`/join-league id:${id}\` to join.` });
+
+    // Create a TRUE private thread (not attached to a message)
+    const thread = await leagueChannel.threads.create({
       name:                `League ${id}`,
       type:                ChannelType.PrivateThread,
       autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
       reason:              `Private thread for league ${id}`,
+      invitable:           false,
     });
 
-    // Add the host to the thread
+    // Add the host so they can see and type in the thread
     await thread.members.add(member.id);
 
+    const typeLabel  = type  === 'swift' ? 'Swift Game' : 'War Game';
+    const perksLabel = perks === 'perks' ? 'Perks'      : 'No Perks';
+
     await thread.send({
-      content: `League **${id}** private session started.\n\nHost: <@${member.id}>\nFormat: ${format} | ${type === 'swift' ? 'Swift Game' : 'War Game'} | ${perks === 'perks' ? 'Perks' : 'No Perks'} | ${REGION_LABELS[region]}\n\nWaiting for players to join...`,
+      content: [
+        `**League ${id} — Private Session**`,
+        ``,
+        `Host: <@${member.id}>`,
+        `Format: ${format}  |  ${typeLabel}  |  ${perksLabel}  |  ${REGION_LABELS[region]}`,
+        ``,
+        `Waiting for players to join via \`/join-league id:${id}\`...`,
+      ].join('\n'),
     });
 
     league.threadId = thread.id;
     db.leagues[id]  = league;
     saveDB(db);
 
-    return;
+    return interaction.editReply({ content: `League **${id}** created. Your private thread is open.` });
   }
 
   // ── /join-league ──────────────────────────────────────────────────────────
   if (commandName === 'join-league') {
-    const id = interaction.options.getString('id').toUpperCase();
-    const db = loadDB();
+    const id     = interaction.options.getString('id').toUpperCase();
+    const db     = loadDB();
     const league = db.leagues[id];
 
     if (!league) {
       return interaction.reply({ content: `No league found with ID **${id}**.`, ephemeral: true });
     }
-
     if (league.players.includes(member.id)) {
       return interaction.reply({ content: 'You are already in this league.', ephemeral: true });
     }
-
     if (league.players.length >= league.capacity) {
       return interaction.reply({ content: 'This league is full.', ephemeral: true });
     }
@@ -247,7 +257,7 @@ client.on('interactionCreate', async interaction => {
     db.leagues[id] = league;
     saveDB(db);
 
-    // Add player to private thread
+    // Add player to private thread so they can see and type in it
     try {
       const thread = await guild.channels.fetch(league.threadId);
       if (thread) {
@@ -255,60 +265,58 @@ client.on('interactionCreate', async interaction => {
         await thread.send({ content: `<@${member.id}> has joined the league. (${league.players.length}/${league.capacity})` });
       }
     } catch (err) {
-      console.error('Could not add player to thread:', err);
+      console.error('Thread add failed:', err);
     }
 
     // Update the embed
     try {
       const leagueChannel = await guild.channels.fetch(LEAGUE_CHANNEL);
-      const embedMsg = await leagueChannel.messages.fetch(league.embedMessageId);
+      const embedMsg      = await leagueChannel.messages.fetch(league.embedMessageId);
       await embedMsg.edit({ embeds: [buildEmbed(league)] });
     } catch (err) {
-      console.error('Could not update embed:', err);
+      console.error('Embed update failed:', err);
     }
 
-    return interaction.reply({ content: `You have joined league **${id}**. Check the private thread.`, ephemeral: true });
+    return interaction.reply({ content: `You have joined league **${id}**. Check your private thread.`, ephemeral: true });
   }
 
   // ── /cancel-league ────────────────────────────────────────────────────────
   if (commandName === 'cancel-league') {
-    const id = interaction.options.getString('id').toUpperCase();
-    const db = loadDB();
+    const id     = interaction.options.getString('id').toUpperCase();
+    const db     = loadDB();
     const league = db.leagues[id];
 
     if (!league) {
       return interaction.reply({ content: `No league found with ID **${id}**.`, ephemeral: true });
     }
-
     if (!member.roles.cache.has(HOST_ROLE)) {
       return interaction.reply({ content: 'You do not have permission to cancel leagues.', ephemeral: true });
     }
-
     if (league.hostId !== member.id) {
       return interaction.reply({ content: 'You can only cancel leagues that you are hosting.', ephemeral: true });
     }
 
-    // Delete private thread
+    // Delete the private thread
     try {
       const thread = await guild.channels.fetch(league.threadId);
-      if (thread) await thread.delete('League cancelled');
+      if (thread) await thread.delete();
     } catch (err) {
-      console.error('Could not delete thread:', err);
+      console.error('Thread delete failed:', err);
     }
 
     // Delete the embed message
     try {
       const leagueChannel = await guild.channels.fetch(LEAGUE_CHANNEL);
-      const embedMsg = await leagueChannel.messages.fetch(league.embedMessageId);
+      const embedMsg      = await leagueChannel.messages.fetch(league.embedMessageId);
       if (embedMsg) await embedMsg.delete();
     } catch (err) {
-      console.error('Could not delete embed message:', err);
+      console.error('Embed delete failed:', err);
     }
 
     delete db.leagues[id];
     saveDB(db);
 
-    // Public cancellation notice (visible to everyone)
+    // Public notice — visible to everyone
     return interaction.reply({
       content: `**League Cancelled**\nLeague **${id}** hosted by <@${member.id}> has been cancelled.`,
     });
@@ -324,15 +332,12 @@ client.on('interactionCreate', async interaction => {
     if (!league) {
       return interaction.reply({ content: `No league found with ID **${id}**.`, ephemeral: true });
     }
-
     if (league.hostId !== member.id) {
       return interaction.reply({ content: 'Only the league host can add players.', ephemeral: true });
     }
-
     if (league.players.includes(target.id)) {
       return interaction.reply({ content: `<@${target.id}> is already in this league.`, ephemeral: true });
     }
-
     if (league.players.length >= league.capacity) {
       return interaction.reply({ content: 'The league is already full.', ephemeral: true });
     }
@@ -341,7 +346,6 @@ client.on('interactionCreate', async interaction => {
     db.leagues[id] = league;
     saveDB(db);
 
-    // Add to thread
     try {
       const thread = await guild.channels.fetch(league.threadId);
       if (thread) {
@@ -349,16 +353,15 @@ client.on('interactionCreate', async interaction => {
         await thread.send({ content: `<@${target.id}> was added to the league by the host. (${league.players.length}/${league.capacity})` });
       }
     } catch (err) {
-      console.error('Could not add player to thread:', err);
+      console.error('Thread add failed:', err);
     }
 
-    // Update embed
     try {
       const leagueChannel = await guild.channels.fetch(LEAGUE_CHANNEL);
-      const embedMsg = await leagueChannel.messages.fetch(league.embedMessageId);
+      const embedMsg      = await leagueChannel.messages.fetch(league.embedMessageId);
       await embedMsg.edit({ embeds: [buildEmbed(league)] });
     } catch (err) {
-      console.error('Could not update embed:', err);
+      console.error('Embed update failed:', err);
     }
 
     return interaction.reply({ content: `<@${target.id}> has been added to league **${id}**.`, ephemeral: true });
@@ -374,15 +377,12 @@ client.on('interactionCreate', async interaction => {
     if (!league) {
       return interaction.reply({ content: `No league found with ID **${id}**.`, ephemeral: true });
     }
-
     if (league.hostId !== member.id) {
       return interaction.reply({ content: 'Only the league host can remove players.', ephemeral: true });
     }
-
     if (target.id === league.hostId) {
       return interaction.reply({ content: 'The host cannot be removed from the league.', ephemeral: true });
     }
-
     if (!league.players.includes(target.id)) {
       return interaction.reply({ content: `<@${target.id}> is not in this league.`, ephemeral: true });
     }
@@ -391,7 +391,6 @@ client.on('interactionCreate', async interaction => {
     db.leagues[id] = league;
     saveDB(db);
 
-    // Remove from thread
     try {
       const thread = await guild.channels.fetch(league.threadId);
       if (thread) {
@@ -399,16 +398,15 @@ client.on('interactionCreate', async interaction => {
         await thread.send({ content: `<@${target.id}> was removed from the league by the host. (${league.players.length}/${league.capacity})` });
       }
     } catch (err) {
-      console.error('Could not remove player from thread:', err);
+      console.error('Thread remove failed:', err);
     }
 
-    // Update embed
     try {
       const leagueChannel = await guild.channels.fetch(LEAGUE_CHANNEL);
-      const embedMsg = await leagueChannel.messages.fetch(league.embedMessageId);
+      const embedMsg      = await leagueChannel.messages.fetch(league.embedMessageId);
       await embedMsg.edit({ embeds: [buildEmbed(league)] });
     } catch (err) {
-      console.error('Could not update embed:', err);
+      console.error('Embed update failed:', err);
     }
 
     return interaction.reply({ content: `<@${target.id}> has been removed from league **${id}**.`, ephemeral: true });
