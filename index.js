@@ -4,6 +4,9 @@ const {
   GatewayIntentBits,
   ChannelType,
   EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   SlashCommandBuilder,
   REST,
   Routes,
@@ -44,27 +47,60 @@ function generateId() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-// ─── Embed builder ────────────────────────────────────────────────────────────
+// ─── Embed builders ───────────────────────────────────────────────────────────
 function buildEmbed(league) {
-  const typeLabel  = league.type  === 'swift'   ? 'Swift Game' : 'War Game';
-  const perksLabel = league.perks === 'perks'   ? 'Perks'      : 'No Perks';
+  const typeLabel  = league.type  === 'swift' ? 'Swift Game' : 'War Game';
+  const perksLabel = league.perks === 'perks' ? 'Perks'      : 'No Perks';
   const spots      = league.capacity - league.players.length;
+  const playerList = league.players.map(id => `<@${id}>`).join(', ');
 
   return new EmbedBuilder()
-    .setTitle('League Open')
-    .setColor(0x2b2d31)
+    .setTitle('League Available')
+    .setColor(0x5865f2)
     .addFields(
-      { name: 'League ID',  value: `\`${league.id}\``,                          inline: true },
-      { name: 'Format',     value: league.format,                               inline: true },
-      { name: 'Match Type', value: typeLabel,                                   inline: true },
-      { name: 'Perks',      value: perksLabel,                                  inline: true },
-      { name: 'Region',     value: REGION_LABELS[league.region],                inline: true },
-      { name: 'Host',       value: `<@${league.hostId}>`,                       inline: true },
-      { name: 'Players',    value: `${league.players.length} / ${league.capacity}`, inline: true },
-      { name: 'Spots Left', value: String(spots),                               inline: true },
+      { name: 'Format',     value: league.format,                           inline: true },
+      { name: 'Match Type', value: typeLabel,                               inline: true },
+      { name: 'Perks',      value: perksLabel,                              inline: true },
+      { name: 'Region',     value: REGION_LABELS[league.region],            inline: true },
+      { name: 'Host',       value: `<@${league.hostId}>`,                   inline: true },
+      { name: 'Spots Left', value: `${league.players.length} / ${league.capacity}`, inline: true },
+      { name: 'Players',    value: playerList || 'None',                    inline: false },
+      { name: 'League ID',  value: `\`${league.id}\``,                      inline: false },
     )
-    .setFooter({ text: `Use /join-league id:${league.id} to join` })
     .setTimestamp();
+}
+
+function buildCancelledEmbed(league) {
+  const typeLabel  = league.type  === 'swift' ? 'Swift Game' : 'War Game';
+  const perksLabel = league.perks === 'perks' ? 'Perks'      : 'No Perks';
+  const playerList = league.players.map(id => `<@${id}>`).join(', ');
+
+  return new EmbedBuilder()
+    .setTitle('League Cancelled')
+    .setColor(0xe74c3c)
+    .addFields(
+      { name: 'Format',     value: league.format,                           inline: true },
+      { name: 'Match Type', value: typeLabel,                               inline: true },
+      { name: 'Perks',      value: perksLabel,                              inline: true },
+      { name: 'Region',     value: REGION_LABELS[league.region],            inline: true },
+      { name: 'Host',       value: `<@${league.hostId}>`,                   inline: true },
+      { name: 'Spots Left', value: `${league.players.length} / ${league.capacity}`, inline: true },
+      { name: 'Players',    value: playerList || 'None',                    inline: false },
+      { name: 'League ID',  value: `\`${league.id}\``,                      inline: false },
+    )
+    .setFooter({ text: 'This league has been cancelled.' })
+    .setTimestamp();
+}
+
+// ─── Join button ──────────────────────────────────────────────────────────────
+function buildJoinRow(leagueId, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`join_${leagueId}`)
+      .setLabel('Join League')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(disabled),
+  );
 }
 
 // ─── Slash commands ───────────────────────────────────────────────────────────
@@ -100,12 +136,6 @@ const commands = [
           { name: 'South America', value: 'south_america' },
           { name: 'Oceania',       value: 'oceania'       },
         )),
-
-  new SlashCommandBuilder()
-    .setName('join-league')
-    .setDescription('Join an open league')
-    .addStringOption(o =>
-      o.setName('id').setDescription('League ID').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('cancel-league')
@@ -158,9 +188,56 @@ client.once('ready', async () => {
 
 // ─── Interactions ─────────────────────────────────────────────────────────────
 client.on('interactionCreate', async interaction => {
+  const { member, guild } = interaction;
+
+  // ── Join button ───────────────────────────────────────────────────────────
+  if (interaction.isButton() && interaction.customId.startsWith('join_')) {
+    const id     = interaction.customId.replace('join_', '');
+    const db     = loadDB();
+    const league = db.leagues[id];
+
+    if (!league) {
+      return interaction.reply({ content: 'This league no longer exists.', ephemeral: true });
+    }
+    if (league.players.includes(member.id)) {
+      return interaction.reply({ content: 'You are already in this league.', ephemeral: true });
+    }
+    if (league.players.length >= league.capacity) {
+      return interaction.reply({ content: 'This league is full.', ephemeral: true });
+    }
+
+    league.players.push(member.id);
+    db.leagues[id] = league;
+    saveDB(db);
+
+    // Add player to private thread
+    try {
+      const thread = await guild.channels.fetch(league.threadId);
+      if (thread) {
+        await thread.members.add(member.id);
+        await thread.send({ content: `<@${member.id}> has joined the league. (${league.players.length}/${league.capacity})` });
+      }
+    } catch (err) {
+      console.error('Thread add failed:', err);
+    }
+
+    // Update the embed — disable button if now full
+    const isFull = league.players.length >= league.capacity;
+    try {
+      await interaction.update({
+        embeds:     [buildEmbed(league)],
+        components: [buildJoinRow(id, isFull)],
+      });
+    } catch (err) {
+      console.error('Embed update failed:', err);
+    }
+
+    return interaction.followUp({ content: `You have joined league **${id}**. Check your private thread.`, ephemeral: true });
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
-  const { commandName, member, guild } = interaction;
+  const { commandName } = interaction;
 
   // ── /host-league ──────────────────────────────────────────────────────────
   if (commandName === 'host-league') {
@@ -168,7 +245,6 @@ client.on('interactionCreate', async interaction => {
     if (interaction.channelId !== LEAGUE_CHANNEL) {
       return interaction.reply({ content: `Leagues can only be hosted in <#${LEAGUE_CHANNEL}>.`, ephemeral: true });
     }
-
     if (!member.roles.cache.has(HOST_ROLE)) {
       return interaction.reply({ content: 'You do not have permission to host leagues.', ephemeral: true });
     }
@@ -186,9 +262,9 @@ client.on('interactionCreate', async interaction => {
       type,
       perks,
       region,
-      capacity: FORMAT_CAPACITY[format],
-      hostId:   member.id,
-      players:  [member.id],
+      capacity:       FORMAT_CAPACITY[format],
+      hostId:         member.id,
+      players:        [member.id],
       threadId:       null,
       embedMessageId: null,
     };
@@ -197,14 +273,19 @@ client.on('interactionCreate', async interaction => {
 
     const leagueChannel = await guild.channels.fetch(LEAGUE_CHANNEL);
 
-    // Post the public embed
-    const embedMsg = await leagueChannel.send({ embeds: [buildEmbed(league)] });
+    // Post the public embed with join button
+    const embedMsg = await leagueChannel.send({
+      embeds:     [buildEmbed(league)],
+      components: [buildJoinRow(id)],
+    });
     league.embedMessageId = embedMsg.id;
 
-    // Post the ping as a SEPARATE message
-    await leagueChannel.send({ content: `<@&${PING_ROLE}> — A new league is open! Use \`/join-league id:${id}\` to join.` });
+    // Separate ping message
+    await leagueChannel.send({
+      content: `<@&${PING_ROLE}> New league available: **${id}**`,
+    });
 
-    // Create a TRUE private thread (not attached to a message)
+    // Create true private thread
     const thread = await leagueChannel.threads.create({
       name:                `League ${id}`,
       type:                ChannelType.PrivateThread,
@@ -213,7 +294,6 @@ client.on('interactionCreate', async interaction => {
       invitable:           false,
     });
 
-    // Add the host so they can see and type in the thread
     await thread.members.add(member.id);
 
     const typeLabel  = type  === 'swift' ? 'Swift Game' : 'War Game';
@@ -226,58 +306,15 @@ client.on('interactionCreate', async interaction => {
         `Host: <@${member.id}>`,
         `Format: ${format}  |  ${typeLabel}  |  ${perksLabel}  |  ${REGION_LABELS[region]}`,
         ``,
-        `Waiting for players to join via \`/join-league id:${id}\`...`,
+        `Waiting for players to join...`,
       ].join('\n'),
     });
 
-    league.threadId = thread.id;
-    db.leagues[id]  = league;
+    league.threadId    = thread.id;
+    db.leagues[id]     = league;
     saveDB(db);
 
     return interaction.editReply({ content: `League **${id}** created. Your private thread is open.` });
-  }
-
-  // ── /join-league ──────────────────────────────────────────────────────────
-  if (commandName === 'join-league') {
-    const id     = interaction.options.getString('id').toUpperCase();
-    const db     = loadDB();
-    const league = db.leagues[id];
-
-    if (!league) {
-      return interaction.reply({ content: `No league found with ID **${id}**.`, ephemeral: true });
-    }
-    if (league.players.includes(member.id)) {
-      return interaction.reply({ content: 'You are already in this league.', ephemeral: true });
-    }
-    if (league.players.length >= league.capacity) {
-      return interaction.reply({ content: 'This league is full.', ephemeral: true });
-    }
-
-    league.players.push(member.id);
-    db.leagues[id] = league;
-    saveDB(db);
-
-    // Add player to private thread so they can see and type in it
-    try {
-      const thread = await guild.channels.fetch(league.threadId);
-      if (thread) {
-        await thread.members.add(member.id);
-        await thread.send({ content: `<@${member.id}> has joined the league. (${league.players.length}/${league.capacity})` });
-      }
-    } catch (err) {
-      console.error('Thread add failed:', err);
-    }
-
-    // Update the embed
-    try {
-      const leagueChannel = await guild.channels.fetch(LEAGUE_CHANNEL);
-      const embedMsg      = await leagueChannel.messages.fetch(league.embedMessageId);
-      await embedMsg.edit({ embeds: [buildEmbed(league)] });
-    } catch (err) {
-      console.error('Embed update failed:', err);
-    }
-
-    return interaction.reply({ content: `You have joined league **${id}**. Check your private thread.`, ephemeral: true });
   }
 
   // ── /cancel-league ────────────────────────────────────────────────────────
@@ -296,7 +333,7 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ content: 'You can only cancel leagues that you are hosting.', ephemeral: true });
     }
 
-    // Delete the private thread
+    // Delete private thread
     try {
       const thread = await guild.channels.fetch(league.threadId);
       if (thread) await thread.delete();
@@ -304,19 +341,22 @@ client.on('interactionCreate', async interaction => {
       console.error('Thread delete failed:', err);
     }
 
-    // Delete the embed message
+    // Update embed to "League Cancelled" — disable the join button
     try {
       const leagueChannel = await guild.channels.fetch(LEAGUE_CHANNEL);
       const embedMsg      = await leagueChannel.messages.fetch(league.embedMessageId);
-      if (embedMsg) await embedMsg.delete();
+      await embedMsg.edit({
+        embeds:     [buildCancelledEmbed(league)],
+        components: [buildJoinRow(id, true)],
+      });
     } catch (err) {
-      console.error('Embed delete failed:', err);
+      console.error('Embed update failed:', err);
     }
 
     delete db.leagues[id];
     saveDB(db);
 
-    // Public notice — visible to everyone
+    // Public notice visible to everyone
     return interaction.reply({
       content: `**League Cancelled**\nLeague **${id}** hosted by <@${member.id}> has been cancelled.`,
     });
@@ -356,10 +396,14 @@ client.on('interactionCreate', async interaction => {
       console.error('Thread add failed:', err);
     }
 
+    const isFull = league.players.length >= league.capacity;
     try {
       const leagueChannel = await guild.channels.fetch(LEAGUE_CHANNEL);
       const embedMsg      = await leagueChannel.messages.fetch(league.embedMessageId);
-      await embedMsg.edit({ embeds: [buildEmbed(league)] });
+      await embedMsg.edit({
+        embeds:     [buildEmbed(league)],
+        components: [buildJoinRow(league.id, isFull)],
+      });
     } catch (err) {
       console.error('Embed update failed:', err);
     }
@@ -404,7 +448,10 @@ client.on('interactionCreate', async interaction => {
     try {
       const leagueChannel = await guild.channels.fetch(LEAGUE_CHANNEL);
       const embedMsg      = await leagueChannel.messages.fetch(league.embedMessageId);
-      await embedMsg.edit({ embeds: [buildEmbed(league)] });
+      await embedMsg.edit({
+        embeds:     [buildEmbed(league)],
+        components: [buildJoinRow(league.id, false)],
+      });
     } catch (err) {
       console.error('Embed update failed:', err);
     }
