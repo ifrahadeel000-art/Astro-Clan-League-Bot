@@ -52,12 +52,13 @@ const DB_PATH = './database.json';
 function loadDB() {
   if (!fs.existsSync(DB_PATH)) {
     fs.writeFileSync(DB_PATH, JSON.stringify({
-      leagues: {}, points: {},
-      shop: { enabled: false, panelMessageId: null, items: [
-        { id: 'custom_role',  name: 'Custom Role',  price: 1000, stock: -1, description: 'A custom role in the server' },
-        { id: 'colored_name', name: 'Colored Name',  price: 750,  stock: -1, description: 'A colored name role'         },
-        { id: 'vip_access',   name: 'VIP Access',    price: 2000, stock: -1, description: 'Access to VIP channels'      },
-      ]},
+      leagues: {},
+      points: {},
+      shop: {
+        enabled: false,
+        panelMessageId: null,
+        items: [],
+      },
     }, null, 2));
   }
   return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
@@ -198,10 +199,12 @@ function buildShopEmbed(db, userId) {
   const legs = getLegs(pts);
   const level = getCurrentLevel(pts);
 
-  const itemLines = db.shop.items.map(item => {
-    const stockText = item.stock === -1 ? 'In Stock' : item.stock === 0 ? 'Out of Stock' : `${item.stock} left`;
-    return `**${item.name}** — ${item.price} pts\n${item.description}  |  *${stockText}*`;
-  }).join('\n\n');
+  const itemLines = db.shop.items.length > 0
+    ? db.shop.items.map(item => {
+        const stockText = item.stock === -1 ? 'In Stock' : item.stock === 0 ? 'Out of Stock' : `${item.stock} left`;
+        return `**${item.name}** — ${item.price} pts\n${item.description}  |  *${stockText}*`;
+      }).join('\n\n')
+    : 'No items in the shop.';
 
   return new EmbedBuilder()
     .setTitle('League Shop')
@@ -210,7 +213,7 @@ function buildShopEmbed(db, userId) {
       { name: 'Your Points', value: `${pts} pts`,              inline: true },
       { name: 'Legs',        value: `${legs}`,                  inline: true },
       { name: 'Level',       value: level ? level.label : 'Unranked', inline: true },
-      { name: 'Available Items', value: itemLines || 'No items in the shop.', inline: false },
+      { name: 'Available Items', value: itemLines, inline: false },
     )
     .setFooter({ text: 'Purchasing deducts points from your balance.' })
     .setTimestamp();
@@ -362,9 +365,9 @@ const commands = [
     .setName('editreward')
     .setDescription('Edit a shop item (HICOM only)')
     .addStringOption(o =>
-      o.setName('id').setDescription('Item ID to edit').setRequired(true))
+      o.setName('name').setDescription('Item name to edit').setRequired(true))
     .addStringOption(o =>
-      o.setName('name').setDescription('New name (or "out of stock" to mark unavailable)').setRequired(false))
+      o.setName('newname').setDescription('New name').setRequired(false))
     .addIntegerOption(o =>
       o.setName('price').setDescription('New price').setRequired(false))
     .addIntegerOption(o =>
@@ -813,20 +816,20 @@ client.on('interactionCreate', async interaction => {
     db.shop.items.push({ id, name, price, stock, description });
     saveDB(db);
 
-    return interaction.reply({ content: `Reward **${name}** (${price} pts) added to the shop with ID \`${id}\`.`, ephemeral: true });
+    return interaction.reply({ content: `Reward **${name}** (${price} pts) added to the shop.`, ephemeral: true });
   }
 
   // ── /editreward ───────────────────────────────────────────────────────────
   if (commandName === 'editreward') {
     if (!member.roles.cache.has(HICOM_ROLE)) return interaction.reply({ content: 'Only HICOM can manage shop rewards.', ephemeral: true });
 
-    const itemId = interaction.options.getString('id');
-    const db     = loadDB();
-    const item   = db.shop.items.find(i => i.id === itemId);
+    const itemName = interaction.options.getString('name');
+    const db       = loadDB();
+    const item     = db.shop.items.find(i => i.name === itemName);
 
-    if (!item) return interaction.reply({ content: `No shop item found with ID \`${itemId}\`. Use /addreward to add new items.`, ephemeral: true });
+    if (!item) return interaction.reply({ content: `No shop item found with name **${itemName}**.`, ephemeral: true });
 
-    const newName  = interaction.options.getString('name');
+    const newName  = interaction.options.getString('newname');
     const newPrice = interaction.options.getInteger('price');
     const newStock = interaction.options.getInteger('stock');
     const newDesc  = interaction.options.getString('description');
