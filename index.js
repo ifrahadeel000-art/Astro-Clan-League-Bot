@@ -732,41 +732,54 @@ client.on('interactionCreate', async interaction => {
     const sub = interaction.options.getSubcommand();
     const db  = loadDB();
 
+    // Shared helper: post a fresh panel or update the existing one
+    async function postOrUpdatePanel(enabled) {
+      const shopChannel = await guild.channels.fetch(SHOP_CHANNEL);
+      let panelMsg = null;
+
+      // Try to fetch existing panel
+      if (db.shop.panelMessageId) {
+        try {
+          panelMsg = await shopChannel.messages.fetch(db.shop.panelMessageId);
+        } catch (err) {
+          panelMsg = null; // message was deleted, will repost
+        }
+      }
+
+      if (panelMsg) {
+        await panelMsg.edit({
+          embeds:     [buildShopPanelEmbed(enabled)],
+          components: [buildShopPanelRow(enabled)],
+        });
+      } else {
+        // Delete old id if stale, then post fresh
+        panelMsg = await shopChannel.send({
+          embeds:     [buildShopPanelEmbed(enabled)],
+          components: [buildShopPanelRow(enabled)],
+        });
+        db.shop.panelMessageId = panelMsg.id;
+        saveDB(db);
+      }
+    }
+
     if (sub === 'enable') {
       db.shop.enabled = true;
       saveDB(db);
-
-      // Update panel if it exists
-      try {
-        const shopChannel = await guild.channels.fetch(SHOP_CHANNEL);
-        if (db.shop.panelMessageId) {
-          const panelMsg = await shopChannel.messages.fetch(db.shop.panelMessageId);
-          await panelMsg.edit({ embeds: [buildShopPanelEmbed(true)], components: [buildShopPanelRow(true)] });
-        }
-      } catch (err) { console.error('Panel update failed:', err); }
-
-      return interaction.reply({ content: 'The shop has been **enabled**.', ephemeral: true });
+      await postOrUpdatePanel(true);
+      return interaction.reply({ content: 'The shop is now **open**. The panel has been posted in the shop channel.', ephemeral: true });
     }
 
     if (sub === 'disable') {
       db.shop.enabled = false;
       saveDB(db);
-
-      try {
-        const shopChannel = await guild.channels.fetch(SHOP_CHANNEL);
-        if (db.shop.panelMessageId) {
-          const panelMsg = await shopChannel.messages.fetch(db.shop.panelMessageId);
-          await panelMsg.edit({ embeds: [buildShopPanelEmbed(false)], components: [buildShopPanelRow(false)] });
-        }
-      } catch (err) { console.error('Panel update failed:', err); }
-
-      return interaction.reply({ content: 'The shop has been **disabled**.', ephemeral: true });
+      await postOrUpdatePanel(false);
+      return interaction.reply({ content: 'The shop is now **closed**. The panel has been updated.', ephemeral: true });
     }
 
     if (sub === 'refresh') {
       const shopChannel = await guild.channels.fetch(SHOP_CHANNEL);
 
-      // Delete old panel if it exists
+      // Always delete old panel and repost fresh
       if (db.shop.panelMessageId) {
         try {
           const old = await shopChannel.messages.fetch(db.shop.panelMessageId);
@@ -782,7 +795,7 @@ client.on('interactionCreate', async interaction => {
       db.shop.panelMessageId = panelMsg.id;
       saveDB(db);
 
-      return interaction.reply({ content: 'Shop panel has been refreshed in the shop channel.', ephemeral: true });
+      return interaction.reply({ content: 'Shop panel has been reposted in the shop channel.', ephemeral: true });
     }
   }
 
