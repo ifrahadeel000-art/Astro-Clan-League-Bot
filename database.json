@@ -1,3 +1,13 @@
 {
-  "leagues": {}
+  "leagues": {},
+  "points": {},
+  "shop": {
+    "enabled": false,
+    "panelMessageId": null,
+    "items": [
+      { "id": "custom_role",  "name": "Custom Role",  "price": 1000, "stock": -1, "description": "A custom role in the server" },
+      { "id": "colored_name", "name": "Colored Name",  "price": 750,  "stock": -1, "description": "A colored name role" },
+      { "id": "vip_access",   "name": "VIP Access",    "price": 2000, "stock": -1, "description": "Access to VIP channels" }
+    ]
+  }
 }
