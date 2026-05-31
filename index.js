@@ -81,11 +81,6 @@ function setPoints(db, userId, amount) {
   db.points[userId] = Math.max(0, amount);
 }
 
-function getLegs(points) {
-  if (points < 5000) return 0;
-  return Math.floor((points - 4000) / 1000);
-}
-
 function getCurrentLevel(points) {
   let level = null;
   for (const tier of LEVEL_ROLES) {
@@ -196,7 +191,6 @@ function buildShopPanelRow(shopEnabled) {
 
 function buildShopEmbed(db, userId) {
   const pts  = getPoints(db, userId);
-  const legs = getLegs(pts);
   const level = getCurrentLevel(pts);
 
   const itemLines = db.shop.items.length > 0
@@ -211,7 +205,6 @@ function buildShopEmbed(db, userId) {
     .setColor(0xf39c12)
     .addFields(
       { name: 'Your Points', value: `${pts} pts`,              inline: true },
-      { name: 'Legs',        value: `${legs}`,                  inline: true },
       { name: 'Level',       value: level ? level.label : 'Unranked', inline: true },
       { name: 'Available Items', value: itemLines, inline: false },
     )
@@ -684,7 +677,6 @@ client.on('interactionCreate', async interaction => {
     const target = interaction.options.getUser('user') || interaction.user;
     const db     = loadDB();
     const pts    = getPoints(db, target.id);
-    const legs   = getLegs(pts);
     const level  = getCurrentLevel(pts);
 
     const embed = new EmbedBuilder()
@@ -693,7 +685,6 @@ client.on('interactionCreate', async interaction => {
       .addFields(
         { name: 'Points', value: `${pts} pts`,                     inline: true },
         { name: 'Level',  value: level ? level.label : 'Unranked', inline: true },
-        { name: 'Legs',   value: String(legs),                     inline: true },
       )
       .setThumbnail(target.displayAvatarURL())
       .setTimestamp();
@@ -713,10 +704,8 @@ client.on('interactionCreate', async interaction => {
     }
 
     const lines = entries.map(([userId, pts], i) => {
-      const legs  = getLegs(pts);
       const level = getCurrentLevel(pts);
-      const legsText = legs > 0 ? ` | ${legs} Leg${legs !== 1 ? 's' : ''}` : '';
-      return `**${i + 1}.** <@${userId}> — **${pts} pts**${level ? `  |  ${level.label}` : ''}${legsText}`;
+      return `**${i + 1}.** <@${userId}> — **${pts} pts**${level ? `  |  ${level.label}` : ''}`;
     }).join('\n');
 
     const embed = new EmbedBuilder()
