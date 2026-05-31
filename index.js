@@ -54,6 +54,7 @@ function loadDB() {
     fs.writeFileSync(DB_PATH, JSON.stringify({
       leagues: {},
       points: {},
+      allTimePoints: {},
       shop: {
         enabled: false,
         panelMessageId: null,
@@ -79,6 +80,14 @@ function getPoints(db, userId) {
 
 function setPoints(db, userId, amount) {
   db.points[userId] = Math.max(0, amount);
+}
+
+function getAllTimePoints(db, userId) {
+  return db.allTimePoints[userId] || 0;
+}
+
+function addAllTimePoints(db, userId, amount) {
+  db.allTimePoints[userId] = (db.allTimePoints[userId] || 0) + amount;
 }
 
 function getCurrentLevel(points) {
@@ -329,7 +338,13 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('leaderboard')
-    .setDescription('View the top point earners'),
+    .setDescription('View the top point earners')
+    .addStringOption(o =>
+      o.setName('type').setDescription('Leaderboard type').setRequired(true)
+        .addChoices(
+          { name: 'Current', value: 'current' },
+          { name: 'All Time', value: 'alltime' },
+        )),
 
   // Shop management (HICOM only)
   new SlashCommandBuilder()
@@ -625,6 +640,7 @@ client.on('interactionCreate', async interaction => {
 
     const before = getPoints(db, target.id);
     setPoints(db, target.id, before + amount);
+    addAllTimePoints(db, target.id, amount);
     saveDB(db);
 
     await syncRoles(guild, target.id, getPoints(db, target.id));
@@ -677,14 +693,16 @@ client.on('interactionCreate', async interaction => {
     const target = interaction.options.getUser('user') || interaction.user;
     const db     = loadDB();
     const pts    = getPoints(db, target.id);
+    const allTimePts = getAllTimePoints(db, target.id);
     const level  = getCurrentLevel(pts);
 
     const embed = new EmbedBuilder()
       .setTitle(`${target.username}'s Points`)
       .setColor(0x5865f2)
       .addFields(
-        { name: 'Points', value: `${pts} pts`,                     inline: true },
-        { name: 'Level',  value: level ? level.label : 'Unranked', inline: true },
+        { name: 'Current Points', value: `${pts} pts`,                     inline: true },
+        { name: 'All Time Points', value: `${allTimePts} pts`,             inline: true },
+        { name: 'Level',           value: level ? level.label : 'Unranked', inline: true },
       )
       .setThumbnail(target.displayAvatarURL())
       .setTimestamp();
@@ -694,8 +712,10 @@ client.on('interactionCreate', async interaction => {
 
   // ── /leaderboard ──────────────────────────────────────────────────────────
   if (commandName === 'leaderboard') {
-    const db      = loadDB();
-    const entries = Object.entries(db.points)
+    const db        = loadDB();
+    const type      = interaction.options.getString('type');
+    const pointsObj = type === 'current' ? db.points : db.allTimePoints;
+    const entries   = Object.entries(pointsObj)
       .sort(([, a], [, b]) => b - a)
       .slice(0, 10);
 
@@ -703,13 +723,14 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ content: 'No points have been awarded yet.', ephemeral: true });
     }
 
+    const typeLabel = type === 'current' ? 'Current' : 'All Time';
     const lines = entries.map(([userId, pts], i) => {
       const level = getCurrentLevel(pts);
       return `**${i + 1}.** <@${userId}> — **${pts} pts**${level ? `  |  ${level.label}` : ''}`;
     }).join('\n');
 
     const embed = new EmbedBuilder()
-      .setTitle('Leaderboard — Top Point Earners')
+      .setTitle(`Leaderboard — ${typeLabel} Top Point Earners`)
       .setColor(0xf39c12)
       .setDescription(lines)
       .setTimestamp();
